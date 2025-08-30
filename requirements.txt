@@ -4,5 +4,5 @@ plotly
 requests
 deep-translator==1.11.4
 joblib
-scikit-learn
+scikit-learn==1.7.0
 xgboost
