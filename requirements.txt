@@ -1,0 +1,5 @@
+streamlit
+pandas
+plotly
+requests
+deep-translator==1.11.4
