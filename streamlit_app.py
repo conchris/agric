@@ -400,6 +400,12 @@ sample_data = {
     'weather': fr_to_en.translate(weather)
 }
 
+# calcul
+def calcul_economic(hectare):
+    une_tonne = 1000
+    prix_par_kilos = 1.25
+    return (hectare - (hectare * 5/100)) * une_tonne * prix_par_kilos
+
 # Onglets (identique)
 tab1, tab2, tab3, tab4 = st.tabs(["🎯 Recommandation", "📈 Rendement", "🧪 Nutriments", "📊 Dashboard"])
 
@@ -464,8 +470,8 @@ with tab1:
                                 class_colors = {"faible": "🔴", "moyen": "🟡", "élevé": "🟢"}
                                 st.metric("📊 Classe", f"{class_colors.get(yield_class, '⚪')} {yield_class.upper()}")
                             with col_y3:
-                                economic_value = predicted_yield * 250
-                                st.metric("💰 Valeur", f"{economic_value:.0f} €/ha")
+                                economic_value = calcul_economic(predicted_yield)
+                                st.metric("💰 Valeur", f"{economic_value:.0f} USD/ha")
                         else:
                             st.warning("⚠️ Rendement non disponible.")
 
@@ -529,8 +535,9 @@ with tab2:
                     class_colors = {"faible": "🔴", "moyen": "🟡", "élevé": "🟢"}
                     st.metric(label="📊 Classification", value=f"{class_colors.get(yield_class, '⚪')} {yield_class.upper()}")
                 with col3:
-                    economic_value = predicted_yield * 250
-                    st.metric(label="💰 Valeur Estimée", value=f"{economic_value:.0f} €/ha")
+                    
+                    economic_value = calcul_economic(predicted_yield)
+                    st.metric(label="💰 Valeur Estimée", value=f"{economic_value:.0f} USD/ha")
                 # Graphique...
                 categories = ['Température', 'Humidité', 'Précipitations', 'pH', 'Nutriments']
                 scores = [
