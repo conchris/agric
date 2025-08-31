@@ -401,9 +401,35 @@ sample_data = {
 }
 
 # calcul
-def calcul_economic(hectare):
+def calcul_economic(hectare, crop_type: None):
+
+    prix_par_kilo_rdc_usd = {
+        'rice': 1.00,  # Riz local et importé.
+        'maize': 0.70,  # Maïs, prix souvent bas car c'est une culture de base.
+        'chickpea': 2.00,  # Pois chiche, prix élevé car moins courant.
+        'kidneybeans': 2.60, # Haricots rouges.
+        'pigeonpeas': 2.00, # Pois d'Angole.
+        'mothbeans': .70, # Données non disponibles.
+        'mungbean': 2.50, # Haricot mungo.
+        'blackgram': 5.50, # Un type de haricot noir de Goma, prix élevé.
+        'lentil': 4.00, # Lentilles, souvent importées.
+        'pomegranate': 5.00, # Grenade, rare et chère.
+        'banana': 1.00, # Banane plantain, varie selon la taille et le marché.
+        'mango': 1.50, # Mangue.
+        'grapes': 8.00, # Raisins, importés et très chers.
+        'watermelon': 1.00, # Pastèque, prix souvent au fruit entier.
+        'muskmelon': 4.00, # Melon, rare et cher.
+        'apple': 3.00, # Pommes, importées.
+        'orange': 1.50, # Oranges, prix à la pièce.
+        'papaya': 1.50, # Papaye, prix à la pièce.
+        'coconut': 1.00, # Noix de coco, prix à la pièce.
+        'cotton': 1.50, # Coton, prix de la fibre brute, non vendu au détail.
+        'jute': .50, # Jute, prix de la fibre, non vendu au détail.
+        'coffee': 2.50  # Café Arabica pour le producteur, prix de la fève verte.
+    }
     une_tonne = 1000
-    prix_par_kilos = 1.25
+    prix_par_kilos = prix_par_kilo_rdc_usd[str(crop_type).lower()]
+    # return hectare * une_tonne * prix_par_kilos
     return (hectare - (hectare * 5/100)) * une_tonne * prix_par_kilos
 
 # Onglets (identique)
@@ -470,7 +496,7 @@ with tab1:
                                 class_colors = {"faible": "🔴", "moyen": "🟡", "élevé": "🟢"}
                                 st.metric("📊 Classe", f"{class_colors.get(yield_class, '⚪')} {yield_class.upper()}")
                             with col_y3:
-                                economic_value = calcul_economic(predicted_yield)
+                                economic_value = calcul_economic(predicted_yield, recommended_crop)
                                 st.metric("💰 Valeur", f"{economic_value:.0f} USD/ha")
                         else:
                             st.warning("⚠️ Rendement non disponible.")
@@ -536,7 +562,7 @@ with tab2:
                     st.metric(label="📊 Classification", value=f"{class_colors.get(yield_class, '⚪')} {yield_class.upper()}")
                 with col3:
                     
-                    economic_value = calcul_economic(predicted_yield)
+                    economic_value = calcul_economic(predicted_yield, to_plant)
                     st.metric(label="💰 Valeur Estimée", value=f"{economic_value:.0f} USD/ha")
                 # Graphique...
                 categories = ['Température', 'Humidité', 'Précipitations', 'pH', 'Nutriments']
@@ -617,7 +643,7 @@ with tab4:
             with col2:
                 st.metric("📈 Rendement", f"{yield_pred:.1f} t/ha", f"Classe: {yield_class}")
             with col3:
-                st.metric("💰 Valeur/ha", f"{(yield_pred * 250):.0f} €")
+                st.metric("💰 Valeur/ha", f"{calcul_economic(yield_pred, recommended_crop):.0f} USD")
             with col4:
                 risk_score = max(0, min(100, 85 - abs(temperature - 25) * 2 - abs(ph - 6.5) * 10))
                 st.metric("⚡ Score Risque", f"{risk_score:.0f}/100")
