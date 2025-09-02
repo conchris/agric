@@ -1,18 +1,16 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
-from joblib import Parallel, delayed, parallel_backend
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import requests
 import io
 import time
 from deep_translator import GoogleTranslator
 import os
 from typing import Dict, Any
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # Traducteurs
 en_to_fr = GoogleTranslator(target='fr')
@@ -26,10 +24,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- (Ton CSS inchangé) ---
+# --- CSS inchangé ---
 st.markdown("""
 <style>
-    /* Import de Google Fonts */
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
     :root {
         --primary-green: #2E7D32;
@@ -117,33 +114,27 @@ st.markdown("""
     <p>🚀 Intelligence Artificielle pour l'Agriculture de Précision</p>
 </div>
 """, unsafe_allow_html=True)
-# --- end CSS ---
 
-# URLs des modèles Azure
+# --- URLs des modèles ---
 MODEL_URLS = {
     'recommendation': 'https://wenzedevstockage.blob.core.windows.net/keys/crop_recommadation_model.pkl',
     'yield': 'https://wenzedevstockage.blob.core.windows.net/keys/rendement_model_optimized.pkl',
     'nutrients': 'https://wenzedevstockage.blob.core.windows.net/keys/estimation_ressources_model_optimized.pkl'
 }
+
 DATASET_URL = "https://wenzedevstockage.blob.core.windows.net/keys/FinalcropPrediction.csv"
 DATASET_CLIMATE = "https://wenzedevstockage.blob.core.windows.net/keys/data_rendement.csv"
 
-# ---- Utilitaires / sécurité ----
-DEFAULT_REQUEST_TIMEOUT = 15  # secondes
-MAX_THREADS = min(4, max(1, (os.cpu_count() or 2)))  # cap raisonnable
+# --- Utilitaires ---
+DEFAULT_REQUEST_TIMEOUT = 15
 
-# Utiliser st.cache_resource pour garder les modèles en mémoire entre les runs
 @st.cache_resource
 def download_and_load_model(url: str, timeout: int = DEFAULT_REQUEST_TIMEOUT):
-    """Télécharge un pkl depuis une URL (avec timeout) et le charge via joblib."""
     try:
         resp = requests.get(url, timeout=timeout)
         resp.raise_for_status()
-        # joblib.load à partir de bytes
-        obj = joblib.load(io.BytesIO(resp.content))
-        return obj
+        return joblib.load(io.BytesIO(resp.content))
     except Exception as e:
-        # Ne raise pas pour ne pas casser l'app - on renvoie None
         st.warning(f"⚠️ Erreur téléchargement/modèle depuis {url}: {e}")
         return None
 
@@ -156,60 +147,39 @@ def safe_requests_csv(url: str, timeout: int = DEFAULT_REQUEST_TIMEOUT):
         st.error(f"❌ Erreur chargement CSV {url}: {e}")
         return pd.DataFrame()
 
-# Chargement des modèles en parallèle (threading backend pour compatibilité)
-def load_all_models_parallel(model_urls: Dict[str, str]) -> Dict[str, Any]:
-    keys = list(model_urls.keys())
-    urls = [model_urls[k] for k in keys]
-
-    # joblib Parallel en mode threads (safe pour Streamlit)
-    with parallel_backend('threading', n_jobs=MAX_THREADS):
-        results = Parallel(n_jobs=len(urls), prefer='threads')(
-            delayed(download_and_load_model)(u) for u in urls
-        )
-    # mappage clé->modèle
-    return {k: m for k, m in zip(keys, results)}
-
-# Fonctions de prédiction (identiques à ton code, avec petits ajustements)
+# --- Fonctions de prédiction optimisées ---
 def predict_crop_recommendation(sample, model_data):
-    """Prédiction de recommandation de culture"""
     try:
         if model_data is None:
             return None
         sample_copy = sample.copy()
-        # Certains de tes modèles attendent d'autres clés - robustesse
         if 'weather' in sample_copy:
             del sample_copy['weather']
-        model = model_data.get('model', None) if isinstance(model_data, dict) else model_data.get('model', None)
+        model = model_data.get('model', None)
         preprocessor = model_data.get('preprocessor', None)
         label_encoder = model_data.get('label_encoder', None)
         top_indices = model_data.get('top_indices', None)
         input_features = model_data.get('input_features', None)
-
-        if model is None or preprocessor is None or label_encoder is None or input_features is None:
+        if None in (model, preprocessor, label_encoder, input_features):
             st.warning("⚠️ Structure du modèle de recommandation inattendue.")
             return None
-
         missing_features = [f for f in input_features if f not in sample_copy]
         if missing_features:
             st.warning(f"⚠️ Features manquantes: {missing_features}")
             return None
-
         sample_df = pd.DataFrame([sample_copy])[input_features]
         sample_prep = preprocessor.transform(sample_df)
         sample_selected = sample_prep[:, top_indices]
-
         pred_class = model.predict(sample_selected)[0]
         pred_proba = model.predict_proba(sample_selected)[0]
         pred_label = label_encoder.inverse_transform([pred_class])[0]
         proba_dict = {label_encoder.inverse_transform([i])[0]: prob for i, prob in enumerate(pred_proba)}
-
         return {'class': pred_label, 'probabilities': proba_dict}
     except Exception as e:
         st.error(f"❌ Erreur prédiction recommandation: {e}")
         return None
 
 def predict_yield(sample, to_plant, model_data):
-    """Prédiction du rendement (même logique que ton code)"""
     try:
         if model_data is None:
             return None, None
@@ -217,7 +187,6 @@ def predict_yield(sample, to_plant, model_data):
         preprocessor = model_data.get("preprocessor", None)
         weights = model_data.get("weights", [1]*len(models))
         input_features = model_data.get("input_features", [])
-        # Harmonisation
         sample_input = pd.DataFrame([{
             'Temperature': sample['temperature'],
             'Rainfall': sample['rainfall'],
@@ -235,7 +204,6 @@ def predict_yield(sample, to_plant, model_data):
             "Crop": "Crop Type"
         }
         sample_input.rename(columns=rename_map, inplace=True)
-
         def create_domain_expert_features(df):
             df = df.copy()
             temp = df['Temperature (°C)']
@@ -270,7 +238,6 @@ def predict_yield(sample, to_plant, model_data):
             df['Available_K'] = 60 + 5 * base_yield + 0.08 * rain
             df['NPK_Balance'] = df['Available_N'] / (df['Available_P'] + 1) / (df['Available_K'] + 1)
             return df
-
         sample_input = create_domain_expert_features(sample_input)
         for col in input_features:
             if col not in sample_input.columns:
@@ -280,7 +247,6 @@ def predict_yield(sample, to_plant, model_data):
             X_processed = preprocessor.transform(sample_input)
         else:
             X_processed = sample_input.values
-
         preds = [m.predict(X_processed) for m in models.values()] if models else [np.zeros((1,))]
         y_pred_final = np.average(preds, axis=0, weights=weights)
         y_val = float(y_pred_final[0])
@@ -296,7 +262,6 @@ def predict_yield(sample, to_plant, model_data):
         return None, None
 
 def predict_nutrients_streamlit(sample, model_data):
-    """Prédiction des besoins en nutriments"""
     try:
         if model_data is None:
             return None
@@ -309,7 +274,6 @@ def predict_nutrients_streamlit(sample, model_data):
         le_crop = model_data.get('label_encoder', None)
         n_crops = model_data.get('n_crops', 0)
         target_names = model_data.get('target_names', [])
-
         sample_copy = sample.copy()
         if le_crop is None:
             st.warning("⚠️ label_encoder absent dans model_data nutriments")
@@ -317,10 +281,8 @@ def predict_nutrients_streamlit(sample, model_data):
         if sample_copy['Crops'] not in le_crop.classes_:
             st.warning(f"❌ Culture '{sample_copy['Crops']}' non reconnue.")
             return None
-
         sample_copy['Crops'] = le_crop.transform([sample_copy['Crops']])[0]
         sample_df = pd.DataFrame([sample_copy])[['Temperature', 'Humidity', 'pH', 'Rainfall(cm)', 'Crops']]
-
         sample_enhanced = sample_df.copy()
         sample_enhanced['Water_Stress'] = (sample_df['Temperature'] - 20) / (sample_df['Humidity'] / 100 + 1e-8)
         sample_enhanced['pH_Optimal'] = np.abs(sample_df['pH'] - 6.5)
@@ -335,19 +297,15 @@ def predict_nutrients_streamlit(sample, model_data):
         sample_enhanced['Temp_Squared'] = sample_df['Temperature'] ** 2
         sample_enhanced['pH_Squared'] = sample_df['pH'] ** 2
         sample_enhanced['Humidity_Squared'] = sample_df['Humidity'] ** 2
-
         for crop_id in range(n_crops):
             sample_enhanced[f'Crop_{crop_id}'] = (sample_df['Crops'] == crop_id).astype(int)
-
         if scaler_X is not None:
             sample_scaled = scaler_X.transform(sample_enhanced)
         else:
             sample_scaled = sample_enhanced.values
-
         rf_pred = rf_model.predict(sample_scaled) if rf_model is not None else np.zeros((1, len(target_names)))
         gb_pred = gb_model.predict(sample_scaled) if gb_model is not None else np.zeros((1, len(target_names)))
         et_pred = et_model.predict(sample_scaled) if et_model is not None else np.zeros((1, len(target_names)))
-
         final_pred = (weights[0] * rf_pred + weights[1] * gb_pred + weights[2] * et_pred)
         if scaler_y is not None:
             pred_scaled = scaler_y.inverse_transform(final_pred)
@@ -359,13 +317,24 @@ def predict_nutrients_streamlit(sample, model_data):
         st.error(f"❌ Erreur prédiction nutriments: {e}")
         return None
 
-# --- Sidebar inputs (comme ton code) ---
+# --- Calcul économique ---
+def calcul_economic(hectare, crop_type: None):
+    prix_par_kilo_rdc_usd = {
+        'rice': 1.00, 'maize': 0.70, 'chickpea': 2.00, 'kidneybeans': 2.60, 'pigeonpeas': 2.00, 'mothbeans': .70,
+        'mungbean': 2.50, 'blackgram': 5.50, 'lentil': 4.00, 'pomegranate': 5.00, 'banana': 1.00, 'mango': 1.50,
+        'grapes': 8.00, 'watermelon': 1.00, 'muskmelon': 4.00, 'apple': 3.00, 'orange': 1.50, 'papaya': 1.50,
+        'coconut': 1.00, 'cotton': 1.50, 'jute': .50, 'coffee': 2.50
+    }
+    une_tonne = 1000
+    prix_par_kilos = prix_par_kilo_rdc_usd.get(str(crop_type).lower(), 1.00)
+    return (hectare - (hectare * 5/100)) * une_tonne * prix_par_kilos
+
+# --- Sidebar ---
 st.sidebar.markdown("## 🌡️ Paramètres Environnementaux")
 with st.sidebar:
     st.markdown("### 🌤️ Conditions Climatiques")
     df = safe_requests_csv(DATASET_URL)
     df_climate = safe_requests_csv(DATASET_CLIMATE)
-
     col1, col2 = st.columns(2)
     with col1:
         temperature = st.slider("🌡️ Température (°C)", min_value=5, max_value=45, value=26, step=1)
@@ -373,11 +342,9 @@ with st.sidebar:
     with col2:
         ph = st.slider("⚗️ pH du sol", min_value=4.0, max_value=9.0, value=6.8, step=0.1)
         rainfall = st.slider("🌧️ Précipitations (mm/an)", min_value=200, max_value=3000, value=1500, step=50)
-
     st.markdown("### 🌍 Conditions du Sol")
     soil_type = st.selectbox("🏔️ Type de sol", list(df.soil.unique()) if not df.empty else ["loam", "sandy", "clay"])
     weather = st.selectbox("☀️ Conditions météo", list(df_climate['Weather Condition'].unique()) if not df_climate.empty else ["Sunny", "Cloudy", "Rain"])
-
     st.markdown("### 🧪 Nutriments Actuels (NPK)")
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -387,7 +354,7 @@ with st.sidebar:
     with col3:
         K = st.number_input("Potassium (K)", min_value=0, max_value=400, value=175)
 
-# Préparation des données
+# --- Préparation des données ---
 sample_data = {
     'N': N,
     'P': P,
@@ -400,39 +367,7 @@ sample_data = {
     'weather': fr_to_en.translate(weather)
 }
 
-# calcul
-def calcul_economic(hectare, crop_type: None):
-
-    prix_par_kilo_rdc_usd = {
-        'rice': 1.00,  # Riz local et importé.
-        'maize': 0.70,  # Maïs, prix souvent bas car c'est une culture de base.
-        'chickpea': 2.00,  # Pois chiche, prix élevé car moins courant.
-        'kidneybeans': 2.60, # Haricots rouges.
-        'pigeonpeas': 2.00, # Pois d'Angole.
-        'mothbeans': .70, # Données non disponibles.
-        'mungbean': 2.50, # Haricot mungo.
-        'blackgram': 5.50, # Un type de haricot noir de Goma, prix élevé.
-        'lentil': 4.00, # Lentilles, souvent importées.
-        'pomegranate': 5.00, # Grenade, rare et chère.
-        'banana': 1.00, # Banane plantain, varie selon la taille et le marché.
-        'mango': 1.50, # Mangue.
-        'grapes': 8.00, # Raisins, importés et très chers.
-        'watermelon': 1.00, # Pastèque, prix souvent au fruit entier.
-        'muskmelon': 4.00, # Melon, rare et cher.
-        'apple': 3.00, # Pommes, importées.
-        'orange': 1.50, # Oranges, prix à la pièce.
-        'papaya': 1.50, # Papaye, prix à la pièce.
-        'coconut': 1.00, # Noix de coco, prix à la pièce.
-        'cotton': 1.50, # Coton, prix de la fibre brute, non vendu au détail.
-        'jute': .50, # Jute, prix de la fibre, non vendu au détail.
-        'coffee': 2.50  # Café Arabica pour le producteur, prix de la fève verte.
-    }
-    une_tonne = 1000
-    prix_par_kilos = prix_par_kilo_rdc_usd[str(crop_type).lower()]
-    # return hectare * une_tonne * prix_par_kilos
-    return (hectare - (hectare * 5/100)) * une_tonne * prix_par_kilos
-
-# Onglets (identique)
+# --- Onglets ---
 tab1, tab2, tab3, tab4 = st.tabs(["🎯 Recommandation", "📈 Rendement", "🧪 Nutriments", "📊 Dashboard"])
 
 # --- TAB 1 ---
@@ -442,24 +377,14 @@ with tab1:
     with col1:
         if st.button("🔮 Analyser & Recommander Complet", key="recommend_btn"):
             with st.spinner("🧠 Chargement des modèles et analyse..."):
-                # 1) charger tous les modèles EN PARALLÈLE (threading)
-                models = load_all_models_parallel(MODEL_URLS)
-
-                recommendation_model = models.get('recommendation')
-                yield_model = models.get('yield')
-                nutrients_model = models.get('nutrients')
-
-                if recommendation_model and yield_model and nutrients_model:
-                    # Exécuter la recommandation (nécessaire pour yield & nutrients)
+                recommendation_model = download_and_load_model(MODEL_URLS['recommendation'])
+                if recommendation_model:
                     rec = predict_crop_recommendation(sample_data, recommendation_model)
-                    if not rec:
-                        st.error("❌ Échec de la recommandation.")
-                    else:
+                    if rec:
                         recommended_crop = rec['class']
                         st.success(f"🌾 **Culture recommandée: {en_to_fr.translate(recommended_crop.upper())}**")
-
                         fig = px.bar(
-                            x=[ en_to_fr.translate(i) for i in list(rec['probabilities'].keys())],
+                            x=[en_to_fr.translate(i) for i in list(rec['probabilities'].keys())],
                             y=list(rec['probabilities'].values()),
                             title="🎯 Probabilités par Culture",
                             color=list(rec['probabilities'].values()),
@@ -467,63 +392,50 @@ with tab1:
                         )
                         fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_family="Poppins")
                         st.plotly_chart(fig, use_container_width=True)
-
                         st.session_state.recommended_crop = recommended_crop
-
-                        # 2) Calculs lourds (rendement + nutriments) en parallèle (threads)
-                        with parallel_backend('threading', n_jobs=2):
-                            results = Parallel(n_jobs=2, prefer='threads')(
-                                delayed(lambda fn, *a, **kw: fn(*a, **kw)) (f, *args)
-                                for f, args in [
-                                    (predict_yield, (sample_data, recommended_crop, yield_model)),
-                                    (predict_nutrients_streamlit, ({'Temperature': temperature,
-                                                                     'Humidity': humidity,
-                                                                     'pH': ph,
-                                                                     'Rainfall(cm)': rainfall / 10,
-                                                                     'Crops': recommended_crop}, nutrients_model))
-                                ]
-                            )
-                        # results[0] = (predicted_yield, yield_class)
-                        predicted_yield, yield_class = results[0] if results and results[0] is not None else (None, None)
-                        predicted_nutrients = results[1] if len(results) > 1 else None
-
-                        # Affichage rendement
-                        if predicted_yield is not None:
-                            col_y1, col_y2, col_y3 = st.columns(3)
-                            with col_y1:
-                                st.metric("🏆 Rendement", f"{predicted_yield:.2f} t/ha")
-                            with col_y2:
-                                class_colors = {"faible": "🔴", "moyen": "🟡", "élevé": "🟢"}
-                                st.metric("📊 Classe", f"{class_colors.get(yield_class, '⚪')} {yield_class.upper()}")
-                            with col_y3:
-                                economic_value = calcul_economic(predicted_yield, recommended_crop)
-                                st.metric("💰 Valeur", f"{economic_value:.0f} USD/ha")
-                        else:
-                            st.warning("⚠️ Rendement non disponible.")
-
-                        # Affichage nutriments
-                        if predicted_nutrients:
-                            col_n1, col_n2, col_n3 = st.columns(3)
-                            with col_n1:
-                                st.metric("🟦 Azote (N)", f"{predicted_nutrients.get('Nitrogen(N)',0):.1f} kg/ha")
-                            with col_n2:
-                                st.metric("🟧 Phosphore (P)", f"{predicted_nutrients.get('phosphorus (P)',0):.1f} kg/ha")
-                            with col_n3:
-                                st.metric("🟪 Potassium (K)", f"{predicted_nutrients.get('Potassium(K)',0):.1f} kg/ha")
-
-                            nutrients_df = pd.DataFrame([
-                                {'Nutriment': en_to_fr.translate(k.split('(')[0]), 'Besoin': v, 'Type': 'Macro' if k in ['Nitrogen(N)', 'phosphorus (P)', 'Potassium(K)'] else 'Micro'}
-                                for k, v in predicted_nutrients.items()
-                            ])
-                            fig_nutrients = px.bar(nutrients_df, x='Nutriment', y='Besoin', color='Type',
-                                                  title="🧪 Profil Nutritionnel Complet",
-                                                  color_discrete_map={'Macro': '#4CAF50', 'Micro': '#2196F3'})
-                            fig_nutrients.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_family="Poppins")
-                            st.plotly_chart(fig_nutrients, use_container_width=True)
-                        else:
-                            st.warning("⚠️ Nutriments non disponibles.")
+                        yield_model = download_and_load_model(MODEL_URLS['yield'])
+                        nutrients_model = download_and_load_model(MODEL_URLS['nutrients'])
+                        if yield_model and nutrients_model:
+                            predicted_yield, yield_class = predict_yield(sample_data, recommended_crop, yield_model)
+                            sample_nutrients = {
+                                'Temperature': temperature,
+                                'Humidity': humidity,
+                                'pH': ph,
+                                'Rainfall(cm)': rainfall / 10,
+                                'Crops': recommended_crop
+                            }
+                            predicted_nutrients = predict_nutrients_streamlit(sample_nutrients, nutrients_model)
+                            if predicted_yield is not None:
+                                col_y1, col_y2, col_y3 = st.columns(3)
+                                with col_y1:
+                                    st.metric("🏆 Rendement", f"{predicted_yield:.2f} t/ha")
+                                with col_y2:
+                                    class_colors = {"faible": "🔴", "moyen": "🟡", "élevé": "🟢"}
+                                    st.metric("📊 Classe", f"{class_colors.get(yield_class, '⚪')} {yield_class.upper()}")
+                                with col_y3:
+                                    economic_value = calcul_economic(predicted_yield, recommended_crop)
+                                    st.metric("💰 Valeur", f"{economic_value:.0f} USD/ha")
+                            if predicted_nutrients:
+                                col_n1, col_n2, col_n3 = st.columns(3)
+                                with col_n1:
+                                    st.metric("🟦 Azote (N)", f"{predicted_nutrients.get('Nitrogen(N)',0):.1f} kg/ha")
+                                with col_n2:
+                                    st.metric("🟧 Phosphore (P)", f"{predicted_nutrients.get('phosphorus (P)',0):.1f} kg/ha")
+                                with col_n3:
+                                    st.metric("🟪 Potassium (K)", f"{predicted_nutrients.get('Potassium(K)',0):.1f} kg/ha")
+                                nutrients_df = pd.DataFrame([
+                                    {'Nutriment': en_to_fr.translate(k.split('(')[0]), 'Besoin': v, 'Type': 'Macro' if k in ['Nitrogen(N)', 'phosphorus (P)', 'Potassium(K)'] else 'Micro'}
+                                    for k, v in predicted_nutrients.items()
+                                ])
+                                fig_nutrients = px.bar(nutrients_df, x='Nutriment', y='Besoin', color='Type',
+                                                      title="🧪 Profil Nutritionnel Complet",
+                                                      color_discrete_map={'Macro': '#4CAF50', 'Micro': '#2196F3'})
+                                fig_nutrients.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_family="Poppins")
+                                st.plotly_chart(fig_nutrients, use_container_width=True)
+                    else:
+                        st.error("❌ Échec de la recommandation.")
                 else:
-                    st.error("❌ Impossible de charger tous les modèles depuis Azure.")
+                    st.error("❌ Modèle de recommandation indisponible.")
     with col2:
         st.markdown("""
         <div class="prediction-card" style="background: rgba(240, 248, 255, 0.9); border-left: 4px solid #4CAF50;">
@@ -539,7 +451,7 @@ with tab1:
         </div>
         """, unsafe_allow_html=True)
 
-# --- TAB 2: Rendement (unchanged logic, uses cached model load when needed) ---
+# --- TAB 2 ---
 with tab2:
     st.markdown("## 📈 Prédiction du Rendement Agricole")
     if 'recommended_crop' in st.session_state:
@@ -547,11 +459,9 @@ with tab2:
         st.info(f"🌾 Culture sélectionnée: **{en_to_fr.translate(to_plant)}** (de la recommandation)")
     else:
         to_plant = st.selectbox("🌾 Choisir une culture", ["maize", "wheat", "rice", "barley", "cotton"])
-
     col1, col2, col3 = st.columns(3)
     if st.button("📊 Prédire le Rendement", key="yield_btn"):
         with st.spinner("🔄 Calcul du rendement potentiel..."):
-            # Charger seulement le modèle rendement (cache_resource fait le reste)
             yield_model = download_and_load_model(MODEL_URLS['yield'])
             if yield_model:
                 predicted_yield, yield_class = predict_yield(sample_data, to_plant, yield_model)
@@ -561,10 +471,8 @@ with tab2:
                     class_colors = {"faible": "🔴", "moyen": "🟡", "élevé": "🟢"}
                     st.metric(label="📊 Classification", value=f"{class_colors.get(yield_class, '⚪')} {yield_class.upper()}")
                 with col3:
-                    
                     economic_value = calcul_economic(predicted_yield, to_plant)
                     st.metric(label="💰 Valeur Estimée", value=f"{economic_value:.0f} USD/ha")
-                # Graphique...
                 categories = ['Température', 'Humidité', 'Précipitations', 'pH', 'Nutriments']
                 scores = [
                     min(100, max(0, 100 - abs(temperature - 25) * 3)),
@@ -579,7 +487,7 @@ with tab2:
             else:
                 st.error("❌ Modèle rendement indisponible.")
 
-# --- TAB 3: Nutriments ---
+# --- TAB 3 ---
 with tab3:
     st.markdown("## 🧪 Estimation des Besoins en Nutriments")
     if st.button("🔬 Analyser les Besoins", key="nutrients_btn"):
@@ -587,7 +495,13 @@ with tab3:
             nutrients_model = download_and_load_model(MODEL_URLS['nutrients'])
             if nutrients_model:
                 crop_for_nutrients = st.session_state.get('recommended_crop', 'maize')
-                sample_for_nutrients = {'Temperature': temperature, 'Humidity': humidity, 'pH': ph, 'Rainfall(cm)': rainfall / 10, 'Crops': crop_for_nutrients}
+                sample_for_nutrients = {
+                    'Temperature': temperature,
+                    'Humidity': humidity,
+                    'pH': ph,
+                    'Rainfall(cm)': rainfall / 10,
+                    'Crops': crop_for_nutrients
+                }
                 predicted_nutrients = predict_nutrients_streamlit(sample_for_nutrients, nutrients_model)
                 if predicted_nutrients:
                     st.success(f"🌾 Analyse pour: **{crop_for_nutrients}**")
@@ -599,7 +513,10 @@ with tab3:
                         st.metric("🟧 Phosphore (P)", f"{predicted_nutrients['phosphorus (P)']:.1f}", "kg/ha")
                     with col3:
                         st.metric("🟪 Potassium (K)", f"{predicted_nutrients['Potassium(K)']:.1f}", "kg/ha")
-                    nutrients_df = pd.DataFrame([{'Nutriment': en_to_fr.translate(k.split('(')[0]), 'Besoin': v, 'Type': 'Macro' if k in ['Nitrogen(N)', 'phosphorus (P)', 'Potassium(K)'] else 'Micro'} for k, v in predicted_nutrients.items()])
+                    nutrients_df = pd.DataFrame([
+                        {'Nutriment': en_to_fr.translate(k.split('(')[0]), 'Besoin': v, 'Type': 'Macro' if k in ['Nitrogen(N)', 'phosphorus (P)', 'Potassium(K)'] else 'Micro'}
+                        for k, v in predicted_nutrients.items()
+                    ])
                     fig = px.bar(nutrients_df, x='Nutriment', y='Besoin', color='Type', title="🧪 Profil Nutritionnel Recommandé", color_discrete_map={'Macro': '#4CAF50', 'Micro': '#2196F3'})
                     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_family="Poppins")
                     st.plotly_chart(fig, use_container_width=True)
@@ -608,22 +525,26 @@ with tab3:
             else:
                 st.error("❌ Modèle nutriments indisponible.")
 
-# --- TAB 4: Dashboard (conserve logique) ---
+# --- TAB 4 ---
 with tab4:
     st.markdown("## 📊 Dashboard Agriculture de Précision")
     if st.button("🚀 Analyse Complète", key="full_analysis"):
         with st.spinner("🔄 Analyse complète en cours..."):
-            # Charger en parallèle (rapide)
-            models = load_all_models_parallel(MODEL_URLS)
-            recommendation_model = models.get('recommendation')
-            yield_model = models.get('yield')
-            nutrients_model = models.get('nutrients')
+            recommendation_model = download_and_load_model(MODEL_URLS['recommendation'])
+            yield_model = download_and_load_model(MODEL_URLS['yield'])
+            nutrients_model = download_and_load_model(MODEL_URLS['nutrients'])
             if recommendation_model and yield_model and nutrients_model:
                 rec = predict_crop_recommendation(sample_data, recommendation_model)
                 if rec:
                     recommended_crop = rec['class']
                     yield_pred, yield_class = predict_yield(sample_data, recommended_crop, yield_model)
-                    sample_nutrients = {'Temperature': temperature, 'Humidity': humidity, 'pH': ph, 'Rainfall(cm)': rainfall / 10, 'Crops': recommended_crop}
+                    sample_nutrients = {
+                        'Temperature': temperature,
+                        'Humidity': humidity,
+                        'pH': ph,
+                        'Rainfall(cm)': rainfall / 10,
+                        'Crops': recommended_crop
+                    }
                     nutrients = predict_nutrients_streamlit(sample_nutrients, nutrients_model)
                 else:
                     st.error("❌ Recommandation échouée.")
@@ -635,7 +556,6 @@ with tab4:
                 recommended_crop = "unknown"
                 yield_pred, yield_class = (0, "inconnu")
                 nutrients = None
-
             st.markdown("### 🎯 Résumé Exécutif")
             col1, col2, col3, col4 = st.columns(4)
             with col1:
@@ -647,15 +567,15 @@ with tab4:
             with col4:
                 risk_score = max(0, min(100, 85 - abs(temperature - 25) * 2 - abs(ph - 6.5) * 10))
                 st.metric("⚡ Score Risque", f"{risk_score:.0f}/100")
-
-            # Graphiques...
             col1, col2 = st.columns(2)
             with col1:
                 conditions = ['Température', 'Humidité', 'pH', 'Précipitations']
-                scores = [min(100, max(0, 100 - abs(temperature - 25) * 3)),
-                          humidity,
-                          min(100, max(0, 100 - abs(ph - 6.5) * 15)),
-                          min(100, max(0, rainfall / 30))]
+                scores = [
+                    min(100, max(0, 100 - abs(temperature - 25) * 3)),
+                    humidity,
+                    min(100, max(0, 100 - abs(ph - 6.5) * 15)),
+                    min(100, max(0, rainfall / 30))
+                ]
                 fig1 = go.Figure(data=go.Scatterpolar(r=scores, theta=conditions, fill='toself'))
                 fig1.update_layout(title="🌡️ Conditions Environnementales", polar=dict(radialaxis=dict(visible=True, range=[0, 100])))
                 st.plotly_chart(fig1, use_container_width=True)
@@ -671,7 +591,6 @@ with tab4:
                 })
                 fig2 = px.bar(npk_data, x='Nutriment', y=['Actuel', 'Recommandé'], title="🧪 Balance NPK", barmode='group', color_discrete_sequence=['#FF7043', '#4CAF50'])
                 st.plotly_chart(fig2, use_container_width=True)
-
             st.markdown("### 💡 Recommandations Actionables")
             recommendations = []
             if temperature > 35:
@@ -687,7 +606,7 @@ with tab4:
             for rec in recommendations:
                 st.markdown(f"- {rec}")
 
-# Footer (inchangé)
+# --- Footer ---
 st.markdown("---")
 col1, col2, col3 = st.columns(3)
 with col1:
